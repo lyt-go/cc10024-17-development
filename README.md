@@ -77,5 +77,28 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 快照接收回执（批量入档）
+
+页面快照逐页入档之外，采集端可以一次提交多条采集页做批量校验入档，
+每一页都会拿到一份持久化的快照接收回执（`data/receipts/<批次>.jsonl`），
+用于告知采集批次哪些页面已经存妥、哪些需要补送。
+
+- `POST /api/page_snapshot/intake`：`{ batch_id, pages: [...] }` 批量校验入档。
+  每页按稳定来源身份 `capture_id` 幂等：整批重发不增加计数，
+  已归档正文（`data/snapshots/archive_<capture_id>.json`，每身份仅一份正式正文）
+  必须能和摘要（sha256）对上。整页无法解码时回执记录正文的解码问题
+  （`error_class=body_decode`）；能读取但字段类型不合规时回执保留
+  Schema 校验定位的字段（`error_class=schema_violation`，规则挂在
+  schema_check 模块的 `page_snapshot_intake` 目标下）。
+- `POST /api/batch_queue/confirm-intake`：`{ batch_id, expected_ids? }` 批次入档确认。
+  消费该批既有回执（重启后仍在磁盘上），把回执关联至本次确认，
+  生成逐条可回放范围（回放前重新核对正文摘要）和补采清单，
+  并把待补数量回写到批次队列条目（`待补数`）。补送成功后再次确认时，
+  只有相应来源页的后续处理结果会被更新。
+- 成功/失败计数只取有对应回执的页面（按 `capture_id` 折叠后的身份数）。
+
+场景测试：`backend/tests/test_snapshot_receipts.py`
+（中断恢复 → 整批重发 → 单独补送 → 两类失败诊断对照 → 唯一正式正文核对）。
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
